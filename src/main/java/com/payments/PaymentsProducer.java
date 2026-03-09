@@ -2,10 +2,12 @@ package com.payments;
 
 import com.proto.ProducerProto;
 import com.proto.ProducerServiceGrpc;
+import com.sun.net.httpserver.HttpServer;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
 
+import java.net.InetSocketAddress;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -20,8 +22,37 @@ public class PaymentsProducer {
 
     private static final Random random = new Random();
     private static volatile boolean running = true;
+    private static volatile boolean producing = false;
 
-    public static void main(String[] args) throws InterruptedException {
+    // Start a simple HTTP server on port 8084
+    private static void startControlServer() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(8084), 0);
+
+        server.createContext("/start", exchange -> {
+            producing = true;
+            String response = "{ \"message\": \"Producer started\" }";
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length());
+            exchange.getResponseBody().write(response.getBytes());
+            exchange.getResponseBody().close();
+        });
+
+        server.createContext("/stop", exchange -> {
+            producing = false;
+            String response = "{ \"message\": \"Producer stopped\" }";
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length());
+            exchange.getResponseBody().write(response.getBytes());
+            exchange.getResponseBody().close();
+        });
+
+        server.start();
+        System.out.println("Producer control server started on port 8084");
+    }
+
+    public static void main(String[] args) throws Exception {
+
+        startControlServer();
 
         // Read broker connection details from ENV, fallback to localhost for local dev
         String brokerHost = System.getenv().getOrDefault("BROKER_HOST", "localhost");
@@ -70,15 +101,17 @@ public class PaymentsProducer {
         int eventCount = 0;
         try {
             while (running) {
-                eventCount++;
-                ProducerProto.ProducerEvent event = buildEvent(eventCount);
-                eventStream.onNext(event);
-
-                if (eventCount % 100 == 0) {
-                    System.out.println("Produced " + eventCount + " events so far...");
+                if (producing) {
+                    eventCount++;
+                    ProducerProto.ProducerEvent event = buildEvent(eventCount);
+                    eventStream.onNext(event);
+                    if (eventCount % 100 == 0) {
+                        System.out.println("Produced " + eventCount + " events so far...");
+                    }
+                    Thread.sleep(delayMs);
+                } else {
+                    Thread.sleep(500); // idle wait when stopped
                 }
-
-                Thread.sleep(delayMs);
             }
         } catch (InterruptedException e) {
             System.out.println("Producer interrupted, shutting down...");

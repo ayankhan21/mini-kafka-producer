@@ -19,6 +19,7 @@ public class PaymentsProducer {
     };
 
     private static final Random random = new Random();
+    private static volatile boolean running = true;
 
     public static void main(String[] args) throws InterruptedException {
 
@@ -54,6 +55,7 @@ public class PaymentsProducer {
                     @Override
                     public void onError(Throwable t) {
                         System.err.println("Stream error: " + t.getMessage());
+                        running = false;
                         latch.countDown();
                     }
 
@@ -67,7 +69,7 @@ public class PaymentsProducer {
         // Produce events indefinitely until process is killed
         int eventCount = 0;
         try {
-            while (true) {
+            while (running) {
                 eventCount++;
                 ProducerProto.ProducerEvent event = buildEvent(eventCount);
                 eventStream.onNext(event);
